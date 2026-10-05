@@ -102,16 +102,18 @@ Las herramientas de edición de imagen con IA profesionales (Photoshop Generativ
 ### Servicios externos
 
 ![Replicate](https://img.shields.io/badge/Replicate-000000?style=flat-square&logo=replicate&logoColor=white)
-![Anthropic](https://img.shields.io/badge/Anthropic_Claude_API-191919?style=flat-square&logo=anthropic&logoColor=white)
-![Cloudinary](https://img.shields.io/badge/Cloudinary-3448C5?style=flat-square&logo=cloudinary&logoColor=white)
 ![Paddle](https://img.shields.io/badge/Paddle-FDDD35?style=flat-square&logo=paddle&logoColor=black)
 ![Google OAuth](https://img.shields.io/badge/Google_OAuth_2.0-4285F4?style=flat-square&logo=google&logoColor=white)
 
 - **Replicate** — ejecución de modelos de IA (SAM, Real-ESRGAN, DeOldify, etc.)
-- **Anthropic Claude API** — asistencia en algunos controladores de procesamiento
-- **Cloudinary** — almacenamiento y servido CDN de imágenes procesadas
 - **Paddle** — procesamiento de pagos, planes y suscripciones
 - **Google OAuth 2.0** — autenticación social
+
+### Almacenamiento de archivos
+
+Las imágenes procesadas se guardan **localmente en el VPS** bajo `public/uploads/` y se sirven directamente desde Nginx. Un job de `node-cron` ejecuta periódicamente scripts de limpieza que eliminan archivos antiguos (basado en edad y uso), manteniendo el disco bajo control sin depender de un CDN externo.
+
+> 💡 **Decisión consciente:** Evitar un CDN como Cloudinary mantiene el costo de infraestructura cercano a cero mientras el proyecto encuentra product-market fit. Es escalable migrar a un CDN cuando el volumen lo justifique.
 
 ### Librerías clave
 
@@ -137,13 +139,11 @@ flowchart TD
 
     Controllers --> MySQL[(🗄️ MySQL<br/>usuarios + créditos)]
     Controllers --> Replicate[🤖 Replicate API<br/>modelos de IA]
-    Controllers --> Cloudinary[☁️ Cloudinary<br/>almacenamiento]
+    Controllers --> LocalFS[📁 /public/uploads<br/>almacenamiento local]
     Controllers --> Paddle[💳 Paddle<br/>pagos]
     Controllers --> Mail[📧 Nodemailer]
-    Controllers --> Claude[🧠 Anthropic Claude]
 
-    Cron[⏰ node-cron] -.->|limpieza periódica| Cloudinary
-    Cron -.->|archivos stale| LocalFS[📁 /public/uploads]
+    Cron[⏰ node-cron] -.->|limpieza periódica| LocalFS
 ```
 
 ### Ciclo de vida de una request
@@ -151,7 +151,7 @@ flowchart TD
 1. **Nginx** termina SSL y hace reverse proxy a Express.
 2. **Express** aplica middleware en orden estricto: cabeceras de seguridad (`helmet`) → compresión → body parsers → sesiones (SQLite) → Passport (auth) → i18n → verificación de mantenimiento → motor Handlebars → router.
 3. **`checkCredits`** se ejecuta antes de cada endpoint de IA: calcula el costo, verifica créditos del usuario (registrado o anónimo) y permite/bloquea la ejecución.
-4. El controlador procesa, llama a servicios externos (Replicate, Cloudinary) y luego `deductCredits` resta el costo.
+4. El controlador procesa, llama a servicios externos (Replicate) y luego `deductCredits` resta el costo.
 5. Respuesta renderizada con Handlebars o JSON para llamadas AJAX.
 
 ---
@@ -178,7 +178,9 @@ Esto es clave para **SEO en ambos idiomas** — Google indexa las URLs localizad
 
 ### 🧹 Limpieza automática de archivos
 
-Las subidas se escriben en un directorio temporal (`public/uploads/`) y en Cloudinary. **`node-cron`** ejecuta scripts `cleanup_*.js` que eliminan archivos stale periódicamente, evitando que el disco del VPS se llene.
+Las imágenes procesadas se almacenan localmente en el VPS (`public/uploads/`). Para evitar que el disco se llene — un problema real al correr un SaaS en un VPS con disco finito — **`node-cron`** ejecuta scripts `cleanup_*.js` que recorren el directorio y eliminan archivos antiguos según política de retención (edad del archivo, uso, estado del procesamiento).
+
+Esto permite operar el servicio **sin depender de un CDN externo** y mantener el costo de infraestructura cercano a cero mientras el proyecto crece.
 
 ### ⚙️ Modo mantenimiento controlado por configuración
 
@@ -194,7 +196,7 @@ Un archivo `config/app-state.json` controla si el sitio está en mantenimiento. 
 | **Proceso Node** | PM2 (gestión de procesos, auto-restart, logs) |
 | **Reverse proxy** | Nginx |
 | **SSL** | Let's Encrypt |
-| **CDN de imágenes** | Cloudinary |
+| **Almacenamiento** | Disco local del VPS + limpieza con node-cron |
 | **DNS** | DreamHost |
 | **Monitoreo** | PM2 logs + health checks |
 
@@ -214,7 +216,7 @@ El uso de `pm2 reload` (en vez de `restart`) permite despliegues sin tirar el se
 ## 📊 Lo que aprendí construyendo este proyecto
 
 - **Diseño de un SaaS end-to-end**: desde la captura de leads anónimos hasta el procesamiento de pagos y la gestión de usuarios pagos.
-- **Integración de modelos de IA en producción** vía APIs (Replicate, Anthropic) con control de costos y manejo de errores asíncronos.
+- **Integración de modelos de IA en producción** vía Replicate API, con control de costos por request y manejo de errores asíncronos.
 - **Gestión de infraestructura real**: SSL, Nginx, PM2, backups de MySQL, rotación de logs.
 - **Pricing de un producto digital**: diseñar un sistema de créditos que sea claro para el usuario y rentable para el negocio.
 - **SEO técnico multilingüe**: rutas localizadas, meta tags dinámicos, hreflang.
